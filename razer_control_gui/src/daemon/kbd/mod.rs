@@ -156,6 +156,9 @@ impl EffectManager {
     }
 
     pub fn update(&mut self, laptop: &mut device::RazerLaptop) {
+        // DISABLED: Keyboard lighting control - do nothing
+        return;
+        
         // Do nothing if we have no effects!
         if self.layers.is_empty() {
             return;

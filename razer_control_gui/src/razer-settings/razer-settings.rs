@@ -554,6 +554,8 @@ fn make_general_page() -> SettingsPage {
 
     let page = SettingsPage::new();
 
+    // DISABLED: Keyboard lighting control section
+    /*
     // Keyboard Section
     let settings_section = page.add_section(Some("Keyboard"));
         let label = Label::new(Some("Effect"));
@@ -639,6 +641,7 @@ fn make_general_page() -> SettingsPage {
             }
         }
     ));
+    */
 
     // Battery Health Optimizer section
     if let Some(bho) = bho {

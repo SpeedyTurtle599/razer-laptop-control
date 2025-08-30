@@ -84,7 +84,7 @@ fn main() {
         }
     }
 
-    start_keyboard_animator_task();
+    // start_keyboard_animator_task(); // DISABLED: Keyboard lighting control
     start_screensaver_monitor_task();
     start_battery_monitor_task();
     let clean_thread = start_shutdown_task();
@@ -337,56 +337,13 @@ pub fn process_client_request(cmd: comms::DaemonCommand) -> Option<comms::Daemon
             comms::DaemonCommand::GetCPUBoost{ac} => Some(comms::DaemonResponse::GetCPUBoost { cpu: d.get_cpu_boost(ac) }),
             comms::DaemonCommand::GetGPUBoost{ac} => Some(comms::DaemonResponse::GetGPUBoost { gpu: d.get_gpu_boost(ac) }),
             comms::DaemonCommand::SetEffect{ name, params } => {
-                let mut res = false;
-                if let Ok(mut k) = EFFECT_MANAGER.lock() {
-                    res = true;
-                    let effect = match name.as_str() {
-                        "static" => Some(kbd::effects::Static::new(params)),
-                        "static_gradient" => Some(kbd::effects::StaticGradient::new(params)),
-                        "wave_gradient" => Some(kbd::effects::WaveGradient::new(params)),
-                        "breathing_single" => Some(kbd::effects::BreathSingle::new(params)),
-                        _ => None
-                    };
-
-                    if let Some(laptop) = d.get_device() {
-                        if let Some(e) = effect {
-                            k.pop_effect(laptop); // Remove old layer
-                            k.push_effect(
-                                e,
-                                [true; 90]
-                                );
-                        } else {
-                            res = false
-                        }
-                    } else {
-                        res = false;
-                    }
-                }
-                Some(comms::DaemonResponse::SetEffect{result: res})
+                // DISABLED: Keyboard lighting control
+                Some(comms::DaemonResponse::SetEffect{result: false})
             }
 
             comms::DaemonCommand::SetStandardEffect{ name, params } => {
-                // TODO save standart effect may be struct ?
-                let mut res = false;
-                if let Some(laptop) = d.get_device() {
-                    if let Ok(mut k) = EFFECT_MANAGER.lock() {
-                        k.pop_effect(laptop); // Remove old layer
-                        let _res = match name.as_str() {
-                            "off" => d.set_standard_effect(device::RazerLaptop::OFF, params),
-                            "wave" => d.set_standard_effect(device::RazerLaptop::WAVE, params),
-                            "reactive" => d.set_standard_effect(device::RazerLaptop::REACTIVE, params),
-                            "breathing" => d.set_standard_effect(device::RazerLaptop::BREATHING, params),
-                            "spectrum" => d.set_standard_effect(device::RazerLaptop::SPECTRUM, params),
-                            "static" => d.set_standard_effect(device::RazerLaptop::STATIC, params),
-                            "starlight" => d.set_standard_effect(device::RazerLaptop::STARLIGHT, params), 
-                            _ => false,
-                        };
-                        res = _res;
-                    }
-                } else {
-                    res = false;
-                }
-                Some(comms::DaemonResponse::SetStandardEffect{result: res})
+                // DISABLED: Keyboard lighting control
+                Some(comms::DaemonResponse::SetStandardEffect{result: false})
             }
             comms::DaemonCommand::SetBatteryHealthOptimizer { is_on, threshold } => { 
                 return Some(comms::DaemonResponse::SetBatteryHealthOptimizer { result: d.set_bho_handler(is_on, threshold)});
