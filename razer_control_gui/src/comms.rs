@@ -71,9 +71,17 @@ pub fn try_bind() -> std::io::Result<UnixStream> {
 
 #[allow(dead_code)]
 pub fn create() -> Option<UnixListener> {
-    if let Ok(_) = std::fs::metadata(SOCKET_PATH) {
-        eprintln!("UNIX Socket already exists. Is another daemon running?");
-        return None;
+    if std::fs::metadata(SOCKET_PATH).is_ok() {
+        // If we can connect, another daemon is running. Otherwise remove stale socket.
+        if UnixStream::connect(SOCKET_PATH).is_ok() {
+            eprintln!("UNIX Socket already exists. Is another daemon running?");
+            return None;
+        }
+
+        if let Err(e) = std::fs::remove_file(SOCKET_PATH) {
+            eprintln!("Could not remove stale UNIX socket: {}", e);
+            return None;
+        }
     }
     if let Ok(listener) = UnixListener::bind(SOCKET_PATH) {
         let mut perms = std::fs::metadata(SOCKET_PATH).unwrap().permissions();

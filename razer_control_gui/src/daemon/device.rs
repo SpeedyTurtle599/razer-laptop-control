@@ -1,7 +1,7 @@
 // mod kbd;
 use serde::{Deserialize, Serialize};
 use serde_big_array::BigArray;
-use std::{thread, time, io, fs};
+use std::{thread, time, io, fs, ffi::CString, path::Path};
 use hidapi::HidApi;
 use crate::dbus_mutter_idlemonitor;
 use crate::config;
@@ -84,6 +84,11 @@ pub struct DeviceManager {
 }
 
 impl DeviceManager {
+    fn read_hex_u16(path: &Path) -> Option<u16> {
+        let text = fs::read_to_string(path).ok()?;
+        u16::from_str_radix(text.trim(), 16).ok()
+    }
+
     pub fn new () -> DeviceManager {
         return DeviceManager {
             device: None,
@@ -521,35 +526,145 @@ impl DeviceManager {
         None
     }
 
-    pub fn discover_devices(&mut self)  {
-        // Check if socket is OK
-        match HidApi::new() {
-            Ok(api) => {
-                let devices = api.device_list()
-                    .filter(|d| d.vendor_id() == RAZER_VENDOR_ID)
-                    .filter(|d| d.interface_number() == 0);
+    fn discover_with_interface(&mut self, api: &HidApi, interface_filter: Option<i32>) -> bool {
+        let devices = api.device_list().filter(|d| d.vendor_id() == RAZER_VENDOR_ID);
 
-                for device in devices {
+        for device in devices {
+            if let Some(interface_number) = interface_filter {
+                if device.interface_number() != interface_number {
+                    continue;
+                }
+            }
 
-                    let result = self.find_supported_device(device.vendor_id(), device.product_id());
-                    if let Some(supported_device) = result {
+            let result = self.find_supported_device(device.vendor_id(), device.product_id());
+            if let Some(supported_device) = result {
+                match api.open_path(device.path()) {
+                    Ok(dev) => {
+                        self.device = Some(RazerLaptop::new(
+                            supported_device.name.clone(),
+                            supported_device.features.clone(),
+                            supported_device.fan.clone(),
+                            dev
+                        ));
+                        return true;
+                    },
+                    Err(e) => {
+                        eprintln!(
+                            "failed to open Razer HID device vid={:04X} pid={:04X} iface={}: {}",
+                            device.vendor_id(),
+                            device.product_id(),
+                            device.interface_number(),
+                            e
+                        );
+                    }
+                };
+            }
+        }
 
-                        match api.open_path(device.path()) {
-                            Ok(dev) => {
-                                self.device = Some(RazerLaptop::new(
-                                    supported_device.name.clone(),
-                                    supported_device.features.clone(),
-                                    supported_device.fan.clone(),
-                                    dev
-                                ));
-                                break;
-                            },
-                            Err(e) => {
-                                eprintln!("Error: {}", e);
-                            }
-                        };
+        false
+    }
+
+    fn discover_from_sysfs_hidraw(&mut self, api: &HidApi) -> bool {
+        let hidraw_dir = Path::new("/sys/class/hidraw");
+        let entries = match fs::read_dir(hidraw_dir) {
+            Ok(entries) => entries,
+            Err(e) => {
+                eprintln!("failed to read /sys/class/hidraw: {}", e);
+                return false;
+            }
+        };
+
+        for entry in entries.flatten() {
+            let hidraw_name = entry.file_name();
+            let hidraw_name = hidraw_name.to_string_lossy();
+            if !hidraw_name.starts_with("hidraw") {
+                continue;
+            }
+
+            let device_path = match fs::canonicalize(entry.path().join("device")) {
+                Ok(path) => path,
+                Err(_) => continue,
+            };
+
+            // hidraw device path looks like .../<iface>/0003:VVVV:PPPP.xxxx.
+            // Vendor/Product live under the USB device directory above <iface>.
+            let iface_dir = match device_path.parent() {
+                Some(path) => path,
+                None => continue,
+            };
+            let usb_dev_dir = match iface_dir.parent() {
+                Some(path) => path,
+                None => continue,
+            };
+
+            let vid = match DeviceManager::read_hex_u16(&usb_dev_dir.join("idVendor")) {
+                Some(vid) => vid,
+                None => continue,
+            };
+            if vid != RAZER_VENDOR_ID {
+                continue;
+            }
+
+            let pid = match DeviceManager::read_hex_u16(&usb_dev_dir.join("idProduct")) {
+                Some(pid) => pid,
+                None => continue,
+            };
+
+            if let Some(supported_device) = self.find_supported_device(vid, pid) {
+                let device_name = supported_device.name.clone();
+                let device_features = supported_device.features.clone();
+                let device_fan = supported_device.fan.clone();
+
+                let hidraw_path = format!("/dev/{}", hidraw_name);
+                let c_hidraw_path = match CString::new(hidraw_path.clone()) {
+                    Ok(path) => path,
+                    Err(_) => continue,
+                };
+
+                match api.open_path(&c_hidraw_path) {
+                    Ok(dev) => {
+                        self.device = Some(RazerLaptop::new(
+                            device_name,
+                            device_features,
+                            device_fan,
+                            dev,
+                        ));
+                        println!("opened supported device via sysfs fallback: {}", hidraw_path);
+                        return true;
+                    },
+                    Err(e) => {
+                        eprintln!(
+                            "failed to open fallback Razer HID path {} (vid={:04X} pid={:04X}): {}",
+                            hidraw_path,
+                            vid,
+                            pid,
+                            e
+                        );
                     }
                 }
+            }
+        }
+
+        false
+    }
+
+    pub fn discover_devices(&mut self)  {
+        match HidApi::new() {
+            Ok(api) => {
+                // Prefer interface 0 when present, then try unknown/other interfaces as fallback.
+                if self.discover_with_interface(&api, Some(0)) {
+                    return;
+                }
+                if self.discover_with_interface(&api, Some(-1)) {
+                    return;
+                }
+                if self.discover_with_interface(&api, None) {
+                    return;
+                }
+                if self.discover_from_sysfs_hidraw(&api) {
+                    return;
+                }
+                eprintln!("no supported Razer HID interface could be opened");
             },
             Err(e) => {
                 eprintln!("Error: {}", e);
